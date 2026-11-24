@@ -1,0 +1,12 @@
+import {cp,mkdir,rm,writeFile} from 'node:fs/promises';
+import {resolve} from 'node:path';
+import {backendOrigin} from './deployment-config.mjs';
+const root=resolve(import.meta.dirname,'..');
+const destination=resolve(root,'dist');
+await rm(destination,{recursive:true,force:true});await mkdir(destination,{recursive:true});
+await cp(resolve(root,'public'),destination,{recursive:true});
+const apiBase=backendOrigin(process.env.TNS_API_BASE);
+await writeFile(resolve(destination,'config.js'),`window.TNS_CONFIG = Object.freeze(${JSON.stringify({apiBase})});\n`);
+await writeFile(resolve(destination,'.nojekyll'),'');
+console.log(`Static frontend built in ${destination}`);
+console.log(apiBase?'Backend origin configured. Admin opens on that origin.':'Same-origin API configured. A static-only deployment still needs a backend.');

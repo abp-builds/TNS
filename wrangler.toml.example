@@ -1,0 +1,25 @@
+name = "tns-team-hub"
+main = "worker/index.mjs"
+compatibility_date = "2026-11-23"
+compatibility_flags = ["nodejs_compat"]
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+run_worker_first = ["/api/*"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "tns-workspace"
+database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+
+[vars]
+# If using GitHub Pages for the public frontend, use that exact origin here.
+# Admin opens on the backend origin, keeping its HttpOnly cookie first-party.
+PUBLIC_ORIGIN = "https://YOUR-GITHUB-USERNAME.github.io"
+
+[triggers]
+crons = ["*/15 * * * *"]
+
+# Set BOOTSTRAP_TOKEN with `wrangler secret put BOOTSTRAP_TOKEN` before first deploy.
+# The owner supplies it once in the admin setup form; it is never a frontend secret.

@@ -1,0 +1,20 @@
+{
+  "name": "tns-team-hub",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The Porch Team Next Steps workspace",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "start": "node server/local.mjs",
+    "test": "node --test test/*.test.mjs",
+    "build": "node scripts/build.mjs",
+    "check:backend": "node scripts/check-backend.mjs",
+    "export:d1": "node scripts/export-d1.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "4.166.0"
+  }
+}
