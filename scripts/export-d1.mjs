@@ -1,21 +1,21 @@
 import {DatabaseSync} from 'node:sqlite';
 import {mkdir,writeFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
-import {SCHEMA} from '../server/store.mjs';
+import {SCHEMA,Store,sqliteAdapter} from '../server/store.mjs';
 import {validateState} from '../core/domain.mjs';
 const root=resolve(import.meta.dirname,'..'),dataDir=resolve(process.env.TNS_DATA_DIR||resolve(root,'.data'));
 const db=new DatabaseSync(resolve(dataDir,'workspace.sqlite'),{readOnly:true});
 const row=db.prepare('SELECT data FROM workspace WHERE id=1').get();
 const admin=db.prepare('SELECT value FROM metadata WHERE key=?').get('admin');
 if(!row||!admin)throw new Error('Set up the local workspace and shared admin passphrase before exporting.');
-const state=validateState(JSON.parse(row.data));
+const state=validateState((await new Store(sqliteAdapter(db)).load()).state);
 if(state.isSample)throw new Error('Replace the fictional roster before exporting a production workspace.');
 const literal=value=>"'"+String(value).replaceAll("'","''")+"'";
 const sql=[
  '-- Private one-time migration. Do not commit or publish this file.',
  '-- Use only with a new TNS database or an untouched sample workspace.',
  SCHEMA,
- `INSERT INTO workspace(id,version,data) VALUES(1,1,${literal(row.data)}) ON CONFLICT(id) DO UPDATE SET data=excluded.data,version=workspace.version+1 WHERE json_extract(workspace.data,'$.isSample')=1;`,
+ `INSERT INTO workspace(id,version,data) VALUES(1,1,${literal(JSON.stringify(state))}) ON CONFLICT(id) DO UPDATE SET data=excluded.data,version=workspace.version+1 WHERE json_extract(workspace.data,'$.isSample')=1 OR json_extract(workspace.data,'$.workspace.isSample')=1;`,
  `INSERT OR IGNORE INTO metadata(key,value) VALUES('admin',${literal(admin.value)});`,
  '-- Existing real workspace data and existing passwords are preserved; sessions are never copied.'
 ].join('\n');

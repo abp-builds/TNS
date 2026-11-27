@@ -104,6 +104,20 @@ Do not put an admin password, bootstrap token, database, backup, or meeting-cont
 
 Local draft generation runs once per minute while the Node process is running. The Worker cron checks every 15 minutes. Both use the configured IANA timezone and create an unpublished draft on the serving morning at or after the review time. If a draft already exists, the job leaves it for leadership to manage; it does not overwrite edits or automatically publish.
 
+## Visual night planner
+
+Admin → Schedule opens the night planner. Choose the serving date, then prepare its draft from the default preset. Each date retains its own structure; changing a night does not rewrite other dates or permanent Disciple pairings.
+
+- **By post:** drag a name onto another seat to move or swap it. On phones or with a keyboard, select a name and choose its destination. Select several people in the People panel to fill a post's open seats together. Fill open slots suggests coverage without replacing valid manual placements.
+- **By person:** search for a leader and change their posts directly in the evening matrix, or open their full-night plan and save several phases together.
+- **Edit a post type:** use its pencil button to change its name, room, timing, instructions, or number of positions for the night. Select several post types to edit shared details together. Click an individual slot's label for its own room, time, instructions, and note overrides.
+- **Night structure:** configure the ordered phases, optional clock times, programs, and post types together. New programs and posts can be added here. Cue-based phases can retain descriptions such as “After worship” instead of fixed times.
+- **Presets:** save structure by default, optionally including starting people for flexible posts. Apply a preset to one draft, choose the default for future unprepared nights, or export/import structure without roster names. Confirmed class leaders continue to follow their class commitments.
+
+Changes autosave to the private draft. Undo/Redo covers the current browser session's recent draft changes; publishing remains a separate action. Absence, staffing, class, and overlap checks still apply to manual allocations. Individual notes and instructions become public when published; absence reasons stay private. The mobile planner uses focused admin navigation, with the logo returning to the team home.
+
+The configuration supports different naming and night structures within this workspace. Separate accounts, workspaces, and data boundaries for other teams are not included in this release.
+
 ## First real season and handover
 
 1. Import the real roster from the Admin Roster CSV dialog, or enter people individually. The sample-replacement option archives sample people, clears fake schedules and absences, and clears fictional class pairings. Import only name, team, staffing group, and role; private context notes are not needed.
@@ -121,6 +135,7 @@ The absence form is deliberately open: a person chooses a roster name without ve
 - `public/`: static frontend and original logo/font assets.
 - `core/`: scheduling rules and fictional sample workspace.
 - `server/`: API, password/session handling, optimistic concurrency, SQLite persistence.
+- `workspace_records` in SQLite/D1 stores each night and preset separately; existing workspace data migrates on its next successful save, preserving password and session records. Admin JSON backups and restores retain the complete workspace and accept earlier version-one backups.
 - `worker/`: Cloudflare Worker and D1 adapter entry point.
 - `test/`: domain and API tests using disposable databases.
 - `research/`: ignored discovery materials; never part of the public build.

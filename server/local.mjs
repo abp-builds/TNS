@@ -3,7 +3,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdir,readFile,stat,chmod } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { resolve,extname,sep } from 'node:path';
-import { Store } from './store.mjs';
+import { Store,sqliteAdapter } from './store.mjs';
 import { createSeed } from '../core/seed.mjs';
 import { handleApi,initializePassword,tick } from './api.mjs';
 
@@ -13,7 +13,7 @@ await mkdir(dataDir,{recursive:true,mode:0o700});
 const db=new DatabaseSync(resolve(dataDir,'workspace.sqlite'));
 await chmod(resolve(dataDir,'workspace.sqlite'),0o600);
 db.exec('PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;');
-const adapter={exec:async sql=>db.exec(sql),first:async(sql,args)=>db.prepare(sql).get(...args),run:async(sql,args)=>db.prepare(sql).run(...args)};
+const adapter=sqliteAdapter(db);
 const store=new Store(adapter,createSeed); await store.initialize();
 await initializePassword(store,process.env.TNS_ADMIN_PASSWORD);
 const port=+(process.env.PORT || 4173),host=process.env.HOST || '127.0.0.1';

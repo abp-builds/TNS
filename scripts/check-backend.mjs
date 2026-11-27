@@ -8,7 +8,14 @@ const request=async(path,cors=false)=>{
  if(cors&&response.headers.get('access-control-allow-origin')!==publicOrigin)throw new Error(`Set the backend PUBLIC_ORIGIN to ${publicOrigin} before publishing Pages.`);
  return response.json();
 };
-const health=await request('/api/health',true);
+let health;
+for(let attempt=0;attempt<90;attempt++){
+ health=await request('/api/health',true);
+ if(health.features?.nightPlanner>=1)break;
+ if(attempt===89)throw new Error('The night-planner backend has not finished deploying. Retry this workflow after Cloudflare is ready.');
+ if(attempt===0)console.log('Waiting for the matching night-planner backend deployment…');
+ await new Promise(resolve=>setTimeout(resolve,2000));
+}
 if(!health.ok)throw new Error('The backend is not healthy.');
 const state=await request('/api/public',true);
 if(!state.backendReady||!Array.isArray(state.people))throw new Error('The backend is not serving a TNS workspace.');

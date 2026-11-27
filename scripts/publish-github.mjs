@@ -15,7 +15,7 @@ const files=[];
 async function add(path){const data=await readFile(path);files.push({path:relative(root,path).split('\\').join('/'),data});}
 async function walk(path){for(const entry of await readdir(path,{withFileTypes:true})){const p=join(path,entry.name);if(entry.isSymbolicLink())throw new Error('Publish only ordinary source files.');if(entry.isDirectory())await walk(p);else if(entry.isFile())await add(p);}}
 for(const dir of ['.github','public','core','server','worker','scripts','test'])await walk(resolve(root,dir));
-for(const path of ['package.json','pnpm-lock.yaml','README.md','.gitignore','wrangler.toml.example'])await add(resolve(root,path));
+for(const path of ['package.json','pnpm-lock.yaml','README.md','PRODUCT.md','.gitignore','wrangler.toml.example'])await add(resolve(root,path));
 const configPath=resolve(process.env.TNS_WRANGLER_CONFIG||resolve(root,'wrangler.toml'));
 const config=await readFile(configPath,'utf8');
 if(/REPLACE_WITH_|YOUR-GITHUB-USERNAME/.test(config))throw new Error('Configure the actual Worker database ID and public origin before publishing.');

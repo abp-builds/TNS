@@ -1,3 +1,4 @@
+import {defaultLayout,withLayout,validateLayout,phaseTime} from './layout.mjs';
 export const id = () => crypto.randomUUID();
 export const clone = value => structuredClone(value);
 export const iso = date => new Date(date).toISOString().slice(0, 10);
@@ -30,6 +31,7 @@ function historyCount(state, personId, postId, date) {
   return Object.values(state.schedules).filter(s => s.date < date && s.published).reduce((n, s) => n + s.published.assignments.filter(a => a.postId === postId && a.people.includes(personId)).length, 0);
 }
 export function assignmentIssues(state, assignments, date) {
+  state=withLayout(state,state.schedules[date]?.draft?.layout);
   const issues = [];
   const people = new Map(state.people.map(p => [p.id, p]));
   for (const a of assignments) {
@@ -43,20 +45,24 @@ export function assignmentIssues(state, assignments, date) {
       else if (a.group !== 'any' && person.group !== a.group) issues.push({ assignmentId: a.id, label: a.label, message: 'Leader does not match this table or post group', severity: 'invalid' });
     }
     if (new Set(a.people).size !== a.people.length) issues.push({ assignmentId: a.id, label: a.label, message: 'The same leader appears twice in one post', severity: 'invalid' });
+    if(a.people.length>(a.preferred||1))issues.push({assignmentId:a.id,label:a.label,message:'This slot has more people than its configured capacity',severity:'invalid'});
   }
-  const occupied = new Map();
   for (const a of assignments.filter(a => a.reuse)) for (const pid of a.people) {
     if (!assignments.some(other => other.id !== a.id && other.programId === a.programId && other.people.includes(pid) && state.posts.some(post => post.id === other.postId && post.kind === 'table'))) issues.push({ assignmentId:a.id, label:a.label, message:'This host must also lead a table in the same program', severity:'invalid' });
+    if(assignments.some(other=>other.id!==a.id&&other.postId===a.postId&&other.people.includes(pid)))issues.push({assignmentId:a.id,label:a.label,message:'A leader cannot fill two seats of the same host post',severity:'invalid'});
   }
-  for (const a of assignments.filter(a => !a.reuse)) for (const pid of a.people) {
-    const key = `${pid}:${a.phase}`;
-    if (occupied.has(key)) issues.push({ assignmentId: a.id, label: a.label, message: `${people.get(pid)?.name || 'Leader'} has overlapping posts`, severity: 'invalid' });
-    occupied.set(key, a.id);
+  const ordinary=assignments.filter(a=>!a.reuse);
+  for(let i=0;i<ordinary.length;i++)for(let j=i+1;j<ordinary.length;j++){
+    const a=ordinary[i],b=ordinary[j],timed=a.timeStart&&a.timeEnd&&b.timeStart&&b.timeEnd;
+    const overlap=timed?a.timeStart<b.timeEnd&&b.timeStart<a.timeEnd:a.phase===b.phase;
+    if(overlap)for(const pid of a.people.filter(pid=>b.people.includes(pid)))issues.push({assignmentId:b.id,label:b.label,message:`${people.get(pid)?.name||'Leader'} has overlapping posts`,severity:'invalid'});
   }
   return issues;
 }
 
 export function generateDraft(state, date, now = new Date()) {
+  const layout=clone(state.schedules[date]?.draft?.layout||defaultLayout(state));
+  state=withLayout(state,layout);
   if (!servingDates(state).includes(date)) throw new Error('Choose a serving date on the calendar.');
   const eligible = state.people.filter(p => isEligible(p) && !isOut(state, p.id, date));
   const assignments = [];
@@ -65,7 +71,12 @@ export function generateDraft(state, date, now = new Date()) {
   const take = (p, phase) => { if (!used.has(phase)) used.set(phase, new Set()); used.get(phase).add(p.id); };
   const reservedPartner = person => assignments.some(a => !a.classId && a.preferred > 1 && a.people.length === 1 && state.people.find(p => p.id === a.people[0])?.partners?.[periodFor(state,date)] === person.id);
   const rank = (postId, phase, group, pool = eligible) => pool.filter(p => available(p, phase) && (group === 'any' || p.group === group)).sort((a, b) => Number(reservedPartner(a)) - Number(reservedPartner(b)) || historyCount(state, a.id, postId, date) - historyCount(state, b.id, postId, date) || a.name.localeCompare(b.name));
-  const make = (post, label, group, more = {}) => ({ id: id(), postId: post.id, programId: post.programId || '', label, phase: post.phase, location: post.location, group, required: 1, preferred: post.preferred || 1, people: [], reuse: Boolean(post.reuse), ...more });
+  const counters=new Map();
+  const make = (post, label, group, more = {}) => {
+    const key=`${post.id}:${group}`,index=counters.get(key)||0;counters.set(key,index+1);
+    const phase=state.phases.find(p=>p.id===post.phase),time=phaseTime(phase,state.settings);
+    return {id:id(),postId:post.id,programId:post.programId||'',postLabel:post.label,label,phase:post.phase,phaseLabel:phase?.label||post.phase,location:post.location,group,required:1,preferred:post.preferred||1,people:[],reuse:Boolean(post.reuse),kind:post.kind,instructions:post.instructions||'',notes:'',timeStart:post.timeStart||time.timeStart,timeEnd:post.timeEnd||time.timeEnd,slotKey:more.classId?`${post.id}:${more.classId}:${more.tableId}`:`${key}:${index}`,...more};
+  };
   const programs = activePrograms(state, date);
   for (const program of programs) {
     const posts = state.posts.filter(p => p.active && p.programId === program.id && (!p.start || p.start <= date) && (!p.end || p.end >= date)).sort((a, b) => a.order - b.order);
@@ -75,7 +86,7 @@ export function generateDraft(state, date, now = new Date()) {
         const fixed = [];
         // Reserve all present committed leaders before suggesting substitutes.
         for (const cohort of cohorts) for (const table of cohort.tables) {
-          const a = make(post, table.label, table.group, { classId: cohort.id, tableId: table.id, preferred: 2, externalName: table.externalName || '', externalTeam: table.externalTeam || '', externalAvailable: externalPresent(table, date), externalConfirmed: Boolean(table.externalConfirmed), committedPersonId: table.personId || '', note: '' });
+          const a = make(post, table.label, table.group, { classId: cohort.id, tableId: table.id, preferred: 1, externalName: table.externalName || '', externalTeam: table.externalTeam || '', externalAvailable: externalPresent(table, date), externalConfirmed: Boolean(table.externalConfirmed), committedPersonId: table.personId || '', note: '' });
           const person = eligible.find(p => p.id === table.personId && p.group === table.group);
           if (person && available(person, post.phase)) { a.people.push(person.id); take(person, post.phase); }
           else if (table.personId) a.note = 'Committed leader unavailable';
@@ -127,7 +138,7 @@ export function generateDraft(state, date, now = new Date()) {
     if (person) a.people.push(person.id);
     assignments.push(a);
   }
-  return { date, status: 'Ready for review', generatedAt: now.toISOString(), assignments, issues: assignmentIssues(state, assignments, date), stale: false };
+  return { date, status: 'Ready for review', generatedAt: now.toISOString(), layout, assignments, issues: assignmentIssues(state, assignments, date), stale: false };
 }
 
 export function markDraftsStale(state) {
@@ -168,8 +179,10 @@ export function publishDraft(state, date, acknowledgeShortages = false, now = ne
   if (issues.some(i => i.severity === 'invalid')) throw new Error(issues.find(i => i.severity === 'invalid').message);
   if (issues.length && !acknowledgeShortages) throw new Error('Review the uncovered posts and confirm publishing with coverage gaps.');
   const snapshot = clone(schedule.draft);
+  delete snapshot.presetId;delete snapshot.presetName;delete snapshot.presetWarnings;delete snapshot.structureCustomized;
   snapshot.status = 'Published'; snapshot.publishedAt = now.toISOString(); snapshot.issues = issues;
-  snapshot.assignments = snapshot.assignments.map(a => ({ ...a, personNames: a.people.map(pid => ({ id: pid, name: state.people.find(p => p.id === pid)?.name || 'Archived leader' })), programName: state.programs.find(p => p.id === a.programId)?.name || '', phaseLabel: state.phases.find(p => p.id === a.phase)?.label || a.phase }));
+  const night=withLayout(state,snapshot.layout);
+  snapshot.assignments = snapshot.assignments.map(a => ({ ...a, personNames: a.people.map(pid => ({ id: pid, name: state.people.find(p => p.id === pid)?.name || 'Archived leader' })), programName: night.programs.find(p => p.id === a.programId)?.name || '', phaseLabel: night.phases.find(p => p.id === a.phase)?.label || a.phase }));
   schedule.published = snapshot;
   return snapshot;
 }
@@ -259,7 +272,13 @@ export function validateState(state) {
   for (const update of state.updates) if (!update.title?.trim() || !update.body?.trim() || !validDate(update.date)) throw new Error('Updates need a title, message, and valid date.');
   for (const [date, schedule] of Object.entries(state.schedules)) {
     if (date !== schedule.date) throw new Error('Invalid schedule date.');
-    if (schedule.draft?.assignments.some(a => !postIds.has(a.postId))) throw new Error('An active draft references an unknown post. Archive posts instead of removing them.');
+    if(schedule.draft?.layout)validateLayout(schedule.draft.layout);
+    const nightPosts=schedule.draft?.layout?new Set(schedule.draft.layout.posts.map(p=>p.id)):postIds;
+    if (schedule.draft?.assignments.some(a => !nightPosts.has(a.postId))) throw new Error('An active draft references an unknown post. Archive posts instead of removing them.');
+  }
+  if(state.presets){
+    if(!Array.isArray(state.presets)||state.presets.length>50||new Set(state.presets.map(p=>p.id)).size!==state.presets.length)throw new Error('Use at most 50 uniquely named presets.');
+    for(const preset of state.presets){if(typeof preset.id!=='string'||!preset.id||!preset.name?.trim()||preset.name.length>120)throw new Error('Each preset needs a name.');validateLayout(preset.layout);if(preset.assignments&&(!Array.isArray(preset.assignments)||preset.assignments.length>500||preset.assignments.some(a=>typeof a.slotKey!=='string'||!Array.isArray(a.people)||a.people.length>3||a.people.some(pid=>!personIds.has(pid)))))throw new Error('Preset names must reference valid roster people and slots.');}
   }
   return state;
 }

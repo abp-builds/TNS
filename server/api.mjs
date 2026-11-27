@@ -1,5 +1,6 @@
 import { randomBytes, scrypt as scryptCallback, timingSafeEqual, createHash } from 'node:crypto';
-import { id, clone, publicState, generateDraft, publishDraft, editAssignment, servingDates, localParts, markDraftsStale, validateState, applyTick, addDays } from '../core/domain.mjs';
+import { id, clone, publicState, generateDraft, publishDraft, editAssignment, servingDates, localParts, markDraftsStale, validateState, shouldGenerate, addDays } from '../core/domain.mjs';
+import {applyPlannerCommand} from '../core/planner.mjs';
 
 const scrypt = (password,salt) => new Promise((resolve,reject) => scryptCallback(password,salt,32,{N:32768,r:8,p:1,maxmem:67108864},(error,value)=>error?reject(error):resolve(value)));
 const digest = value => createHash('sha256').update(value).digest('hex');
@@ -40,8 +41,8 @@ export async function mutate(store,operation,expectedVersion) {
 const allowedFields={
   people:['id','name','group','team','role','assignable','active','partners'],
   programs:['id','name','mode','location','priority','active','description'],
-  posts:['id','programId','label','kind','phase','location','counts','preferred','reuse','order','active','instructions','start','end'],
-  phases:['id','name','label','cue'],
+  posts:['id','programId','label','kind','phase','location','counts','preferred','reuse','order','active','instructions','start','end','timeStart','timeEnd'],
+  phases:['id','name','label','cue','timeStart','timeEnd'],
   classes:['id','name','programId','provisional','dates','tables','active'],
   events:['id','title','date','time','location','type','url','description','serviceNight'],
   resources:['id','title','category','description','url','body','published'],
@@ -75,7 +76,9 @@ function updatePersonPairs(state,person,previous) {
 }
 function runCommand(state,command) {
   const {action}=command;
-  if (action==='saveRecord') {
+  if (action?.startsWith('planner:')) {
+    applyPlannerCommand(state,command);
+  } else if (action==='saveRecord') {
     const {collection}=command,record=cleanRecord(collection,command.record);
     const old=state[collection].find(x=>x.id===record.id),previous=old?clone(old):null;
     const next={...old,...record};
@@ -144,7 +147,7 @@ export async function handleApi(request,store,context={}) {
     }
     if (!['GET','POST'].includes(request.method)) fail('Method not allowed.',405);
     if (request.method==='POST' && (!allowedPublicOrigin || (!publicPath && !sameOrigin) || request.headers.get('x-tns-request')!=='1')) fail('Request origin not allowed.',403);
-    if (path==='/api/health') return json({ok:true,storage:'connected'},200,cors);
+    if (path==='/api/health') return json({ok:true,storage:'connected',features:{nightPlanner:1}},200,cors);
     if (path==='/api/public' && request.method==='GET') return json({...publicState((await store.load()).state),backendReady:true},200,cors);
     if (path==='/api/auth' && request.method==='GET') return json({authenticated:await authenticated(store,request),configured:Boolean(await store.meta('admin')),setupAvailable:Boolean(context.localSetup || context.bootstrapToken),setupTokenRequired:!context.localSetup});
     if (path==='/api/setup' && request.method==='POST') {
@@ -204,7 +207,7 @@ export async function handleApi(request,store,context={}) {
 
 export async function tick(store,now=new Date()) {
   const {state}=await store.load();
-  if (!applyTick(state,now)) return false;
-  await mutate(store,current=>{ applyTick(current,now); });
+  if (!shouldGenerate(state,now)) return false;
+  await mutate(store,current=>{if(shouldGenerate(current,now)){const date=localParts(now,current.settings.timezone).date;applyPlannerCommand(current,{action:'planner:prepare',date});current.schedules[date].draft.generatedAt=now.toISOString();}});
   return true;
 }

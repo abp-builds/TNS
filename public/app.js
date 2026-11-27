@@ -1,3 +1,4 @@
+import {createNightPlanner} from './planner.js';
 const API = (window.TNS_CONFIG?.apiBase || '').replace(/\/$/,'');
 const ui = { data:null, admin:null, auth:{authenticated:false,configured:true}, date:'', person:localStorage.getItem('tns-selected-person') || '', postProgram:'all', myPosts:false, resourceCategory:'All', period:'spring', settingsTab:'workspace', month:'2027-01', calendarDate:'', busy:false };
 const $ = selector => document.querySelector(selector);
@@ -76,7 +77,7 @@ function notice(text,tone='',action){return h('div',{class:`notice ${tone}`},ico
 function empty(title,text,action,i='calendar'){return h('div',{class:'empty-state'},icon(i),h('h3',{},title),h('p',{},text),action);}
 function sectionTitle(title,href,text='View all'){return h('div',{class:'section-title'},h('h2',{},title),href?h('a',{class:'text-link',href},text):null);}
 function modal(title,description,content,{wide=false,onSave=null,saveLabel='Save changes',extraActions=[]}={}){
-  const dialog=$('#modal'),returnFocus=document.activeElement;dialog.className=wide?'wide':'';
+  const dialog=$('#modal'),returnFocus=document.activeElement,returnFocusId=dialog.open?dialog.dataset.returnFocusId:returnFocus?.id;dialog.dataset.returnFocusId=returnFocusId||'';dialog.className=wide?'wide':'';
   const error=h('div',{class:'form-error',role:'alert',tabindex:'-1'});
   const close=()=>dialog.close();
   const body=h('div',{class:'modal-body'},error,content);
@@ -86,7 +87,7 @@ function modal(title,description,content,{wide=false,onSave=null,saveLabel='Save
     try{await onSave(new FormData(form),form);dialog.close();}catch(e){error.textContent=e.message;error.focus();}finally{submit.disabled=false;}
   }},body,onSave?actions:null);
   dialog.replaceChildren(h('div',{class:'modal-heading'},h('div',{},h('h2',{id:'modal-title'},title),description?h('p',{},description):null),h('button',{class:'icon-btn',type:'button','aria-label':'Close dialog',onClick:close},icon('close'))),form);
-  dialog.onclose=()=>{if(returnFocus?.isConnected)returnFocus.focus();};dialog.onclick=e=>{if(e.target===dialog)dialog.close();};dialog.showModal();return form;
+  dialog.onclose=()=>{const destination=returnFocus?.isConnected?returnFocus:(returnFocusId?document.getElementById(returnFocusId):null)||document.getElementById('planner-control-night-structure');destination?.focus({preventScroll:true});};dialog.onclick=e=>{if(e.target===dialog)dialog.close();};dialog.showModal();return form;
 }
 function header(){
   const adminHref=API&&new URL(API).origin!==location.origin?`${API}/#admin`:'#admin';
@@ -98,10 +99,13 @@ function header(){
 }
 function dateSelector(onChange=()=>render()) {return h('select',{'aria-label':'Serving date',value:ui.date,onChange:e=>{ui.date=e.target.value;onChange();document.querySelector('select[aria-label="Serving date"]')?.focus({preventScroll:true});}},ui.data.servingDates.map(date=>option(date,longDate(date))));}
 function personSelector(onChange=()=>render(),name='personId'){return h('select',{name,'aria-label':'Choose your name',value:ui.person,class:'public-person-select',onChange:e=>{const inDialog=Boolean(e.target.closest('dialog'));ui.person=e.target.value;localStorage.setItem('tns-selected-person',ui.person);onChange();if(!inDialog)document.querySelector('.public-person-select')?.focus({preventScroll:true});}},option('','Choose your name'),ui.data.people.map(p=>option(p.id,p.name)));}
-function meetingLocation(date){return ui.data.settings.allLeaderFirstTuesday&&+date.slice(-2)<=7?ui.data.settings.allLeaderRoom:ui.data.settings.teamRoom;}
-function phaseLabel(phase){return ui.data.phases.find(p=>p.id===phase)?.label||phase;}
+function nightData(date=ui.date){const layout=ui.data.schedules[date]?.layout;return layout?{...ui.data,settings:{...ui.data.settings,...layout.settings},phases:layout.phases,programs:layout.programs,posts:layout.posts}:ui.data;}
+function meetingLocation(date){const s=nightData(date).settings;return s.allLeaderFirstTuesday&&+date.slice(-2)<=7?s.allLeaderRoom:s.teamRoom;}
+function phaseLabel(phase){return nightData().phases.find(p=>p.id===phase)?.label||phase;}
+function assignmentTime(a){return a.timeStart&&a.timeEnd?`${timeFormat(a.timeStart)}–${timeFormat(a.timeEnd)}`:a.timeStart?`From ${timeFormat(a.timeStart)}`:a.phaseLabel||phaseLabel(a.phase);}
+function flowTime(phase,settings){return phase.timeStart&&phase.timeEnd?`${timeFormat(phase.timeStart)}–${timeFormat(phase.timeEnd)}`:phase.id==='gather'?`${timeFormat(settings.teamStart)}–${timeFormat(settings.teamEnd)}`:phase.label;}
 function home(){
-  const data=ui.data,schedule=data.schedules[ui.date],phaseOrder=new Map(data.phases.map((phase,index)=>[phase.id,index]));
+  const data=nightData(),schedule=data.schedules[ui.date],phaseOrder=new Map(data.phases.map((phase,index)=>[phase.id,index]));
   const my=(schedule?.assignments.filter(a=>a.people.includes(ui.person))||[]).sort((a,b)=>(phaseOrder.get(a.phase)??Infinity)-(phaseOrder.get(b.phase)??Infinity)||Number(data.posts.find(p=>p.id===b.postId)?.kind==='host')-Number(data.posts.find(p=>p.id===a.postId)?.kind==='host'));
   const isOut=data.unavailable.some(a=>a.personId===ui.person&&a.date===ui.date);
   const selectedPerson=data.people.find(p=>p.id===ui.person);
@@ -113,10 +117,12 @@ function home(){
     :selectedPerson?.role==='Team lead'?personalMessage('You’re serving as a team lead','You’re outside the regular post rotation. Use Posts to review the full plan.','people')
     :!schedule?personalMessage('Your posts will appear here','Leadership will review and publish the plan for this night.','clock')
     :my.length?h('ol',{class:'personal-posts','aria-label':'Your posts in evening order'},my.map(a=>h('li',{class:'personal-post'},
-      h('p',{class:'personal-phase'},phaseLabel(a.phase)),
+      h('p',{class:'personal-phase'},assignmentTime(a)),
+      a.kind==='table'&&a.postLabel?h('p',{class:'personal-role-type'},a.postLabel):null,
       h('h3',{},a.label),h('p',{class:'personal-room'},icon('pin'),a.location),
       a.externalName?h('p',{class:'personal-partner'},`With ${a.externalName}${a.externalTeam?` (${a.externalTeam})`:''}${a.externalAvailable?'':' — unavailable / unconfirmed'}`):null,
-      a.people.length>1?h('p',{class:'personal-partner'},`With ${a.personNames.filter(p=>p.id!==ui.person).map(p=>p.name).join(', ')}`):null)))
+      a.people.length>1?h('p',{class:'personal-partner'},`With ${a.personNames.filter(p=>p.id!==ui.person).map(p=>p.name).join(', ')}`):null,
+      a.instructions?h('p',{class:'personal-instructions preline'},a.instructions):null,a.notes?h('p',{class:'personal-notes preline'},a.notes):null)))
     :personalMessage('You don’t have a published post','Check with a team lead if you expected an assignment.','people');
   const assignment=h('section',{class:'personal-plan','aria-labelledby':'personal-title'},
     h('div',{class:'personal-heading'},h('h2',{id:'personal-title'},'Where you’re needed'),badge(schedule?(schedule.needsReview?'Coverage being reviewed':'Posts published'):'Posts not published',schedule?(schedule.needsReview?'amber':'green'):'outline')),
@@ -126,7 +132,7 @@ function home(){
   const flow=h('section',{class:'run-of-night','aria-labelledby':'flow-title'},
     h('div',{class:'section-title'},h('h2',{id:'flow-title'},'The flow of the night'),h('span',{class:'small-muted'},`Until ${timeFormat(data.settings.nightEnd)}`)),
     h('ol',{class:'run-sheet'},data.phases.map(phase=>h('li',{},
-      h('div',{class:'run-time'},phase.id==='gather'?`${timeFormat(data.settings.teamStart)}–${timeFormat(data.settings.teamEnd)}`:phase.label),
+      h('div',{class:'run-time'},flowTime(phase,data.settings)),
       h('div',{class:'run-content'},h('h3',{},phase.id==='gather'&&allLeader?'All-leader meeting':phase.name),h('p',{},phase.id==='gather'?meetingLocation(ui.date):phase.cue))))));
   const updates=data.updates.slice().sort((a,b)=>+b.pinned-+a.pinned||b.date.localeCompare(a.date)).slice(0,2);
   return [h('div',{class:'night-heading'},
@@ -145,26 +151,27 @@ function resourceRow(resource){return h('a',{class:'list-row',...(resource.url?l
 function showResource(resource){modal(resource.title,resource.description,h('div',{class:'resource-body'},resource.body||'Open the linked resource for the full guide.'));}
 function postsView(){
   const schedule=ui.data.schedules[ui.date];
-  return [heading('Posts','The published plan for the night, from Engine Room to tables and care.',schedule?btn('Print posts',()=>window.print(),'secondary','file'):null),h('div',{class:'toolbar'},h('div',{class:'toolbar-group'},dateSelector(),h('select',{'aria-label':'Filter by program',value:ui.postProgram,onChange:e=>{ui.postProgram=e.target.value;render();}},option('all','All areas'),option('service','During service'),ui.data.programs.filter(p=>p.active).map(p=>option(p.id,p.name)))),h('div',{class:'toolbar-group'},personSelector(),h('label',{class:'check'},h('input',{type:'checkbox',checked:ui.myPosts,onChange:e=>{ui.myPosts=e.target.checked;render();}}),'My posts only'))),schedule?.needsReview?notice('Availability changed after these posts were published. Leadership is reviewing the affected coverage.','amber'):null,schedule?postsBoard(schedule):empty('Posts haven’t been published for this night','Leadership will review the draft before releasing assignments. You can report an absence ahead of time.',btn('Mark absence',showAbsence,'secondary'))];
+  return [heading('Posts','The published plan for the night, from Engine Room to tables and care.',schedule?btn('Print posts',()=>window.print(),'secondary','file'):null),h('div',{class:'toolbar'},h('div',{class:'toolbar-group'},dateSelector(),h('select',{'aria-label':'Filter by program',value:ui.postProgram,onChange:e=>{ui.postProgram=e.target.value;render();}},option('all','All areas'),option('service','During service'),nightData().programs.filter(p=>p.active).map(p=>option(p.id,p.name)))),h('div',{class:'toolbar-group'},personSelector(),h('label',{class:'check'},h('input',{type:'checkbox',checked:ui.myPosts,onChange:e=>{ui.myPosts=e.target.checked;render();}}),'My posts only'))),schedule?.needsReview?notice('Availability changed after these posts were published. Leadership is reviewing the affected coverage.','amber'):null,schedule?postsBoard(schedule):empty('Posts haven’t been published for this night','Leadership will review the draft before releasing assignments. You can report an absence ahead of time.',btn('Mark absence',showAbsence,'secondary'))];
 }
 function postsBoard(schedule){
+  const data=nightData();
   let assignments=schedule.assignments;
   if(ui.postProgram!=='all')assignments=assignments.filter(a=>ui.postProgram==='service'?a.phase==='service':a.programId===ui.postProgram);
   if(ui.myPosts&&ui.person)assignments=assignments.filter(a=>a.people.includes(ui.person));
   const areaFor=a=>a.phase!=='post'?'before':a.programId||'service';
   const areas=[...new Set(assignments.map(areaFor))].sort((a,b)=>a==='before'?-1:b==='before'?1:0);
-  const boardItem=a=>h('li',{class:`board-person${a.people.includes(ui.person)?' mine':''}`},h('strong',{class:'board-post-label'},`${ui.data.posts.find(p=>p.id===a.postId)?.kind!=='table'&&a.group!=='any'?(a.group==='men'?'Men · ':'Women · '):''}${a.label}`),a.personNames.map(p=>h('span',{},p.name)),a.externalName?h('span',{class:'board-external'},`${a.externalName} · ${a.externalTeam||'Partner team'}${a.externalAvailable?'':' · unavailable / unconfirmed'}`):null,a.needsCoverage?h('span',{class:'coverage-gap'},'Needs coverage'):null,a.note?h('small',{class:'small-muted'},a.note):null);
-  return h('article',{class:'posts-board'},h('header',{class:'board-title'},h('img',{src:ui.data.settings.logoUrl||'./assets/tns-logo.png',alt:'Team Next Steps · The Porch',width:100,height:96}),h('div',{},h('h2',{},`${ui.data.settings.shortName} Posts and Roles`),h('p',{},`POSTS ${dateFormat(ui.date,{month:'numeric',day:'numeric'})}`),h('small',{},`${longDate(ui.date)}, ${ui.date.slice(0,4)}`))),h('div',{class:'board-content'},areas.length?areas.map(key=>{
-    const rows=assignments.filter(a=>areaFor(a)===key),program=ui.data.programs.find(p=>p.id===key);
+  const boardItem=a=>h('li',{class:`board-person${a.people.includes(ui.person)?' mine':''}`},h('strong',{class:'board-post-label'},`${data.posts.find(p=>p.id===a.postId)?.kind!=='table'&&a.group!=='any'?(a.group==='men'?'Men · ':'Women · '):''}${a.label}`),a.personNames.map(p=>h('span',{},p.name)),a.externalName?h('span',{class:'board-external'},`${a.externalName} · ${a.externalTeam||'Partner team'}${a.externalAvailable?'':' · unavailable / unconfirmed'}`):null,a.needsCoverage?h('span',{class:'coverage-gap'},'Needs coverage'):null,a.notes?h('p',{class:'board-member-notes preline'},a.notes):null,a.overrides?.instructions?h('p',{class:'board-member-notes preline'},a.instructions):null,a.note?h('small',{class:'small-muted'},a.note):null);
+  return h('article',{class:'posts-board'},h('header',{class:'board-title'},h('img',{src:data.settings.logoUrl||'./assets/tns-logo.png',alt:'Team Next Steps · The Porch',width:100,height:96}),h('div',{},h('h2',{},`${data.settings.shortName} Posts and Roles`),h('p',{},`POSTS ${dateFormat(ui.date,{month:'numeric',day:'numeric'})}`),h('small',{},`${longDate(ui.date)}, ${ui.date.slice(0,4)}`))),h('div',{class:'board-content'},areas.length?areas.map(key=>{
+    const rows=assignments.filter(a=>areaFor(a)===key),program=data.programs.find(p=>p.id===key);
     const columnKeys=[...new Set(rows.map(a=>{
-      const post=ui.data.posts.find(p=>p.id===a.postId);return post?.kind==='table'?`${a.postId}:${a.group}`:a.postId;
+      const post=data.posts.find(p=>p.id===a.postId);return post?.kind==='table'?`${a.postId}:${a.group}`:a.postId;
     }))];
     return h('section',{class:'board-area'},h('div',{class:'board-area-heading'},h('h3',{},key==='before'?'Before tables & care':rows[0].programName||program?.name||'During the message'),h('span',{},program?rows[0].location:'After worship → piano-man cue')),h('div',{class:'board-columns'},columnKeys.map(column=>{
-      const columnRows=rows.filter(a=>column===a.postId||column===`${a.postId}:${a.group}`),first=columnRows[0],post=ui.data.posts.find(p=>p.id===first.postId);
+      const columnRows=rows.filter(a=>column===a.postId||column===`${a.postId}:${a.group}`),first=columnRows[0],post=data.posts.find(p=>p.id===first.postId);
       const label=column.includes(':')?(first.group==='men'?'Men’s tables':first.group==='women'?'Women’s tables':'Tables'):post?.label||first.label;
-      return h('section',{class:'board-column'},h('header',{},h('h4',{},label),h('p',{},`${first.phaseLabel||phaseLabel(first.phase)} · ${first.location}`)),h('ul',{},columnRows.map(boardItem)));
+      return h('section',{class:'board-column'},h('header',{},h('h4',{},label),post?.instructions?h('p',{class:'board-role-instructions preline'},post.instructions):null,h('p',{},`${assignmentTime(first)} · ${first.location}`)),h('ul',{},columnRows.map(boardItem)));
     })));
-  }):empty('No posts in this view','Try another area or turn off My posts only.'),h('section',{class:'night-flow-table'},h('h3',{},'The flow of the night'),h('table',{},h('caption',{class:'sr-only'},'When and where to serve'),h('tbody',{},ui.data.phases.map(phase=>h('tr',{},h('th',{scope:'row'},phase.id==='gather'?`${timeFormat(ui.data.settings.teamStart)}–${timeFormat(ui.data.settings.teamEnd)}`:phase.label),h('td',{},h('strong',{},phase.name),h('span',{},phase.id==='gather'?`${meetingLocation(ui.date)} · ${ui.data.settings.allLeaderFirstTuesday&&+ui.date.slice(-2)<=7?'All-leader meeting':'Team time'}`:phase.cue))))))),h('p',{class:'board-published'},`Published ${new Intl.DateTimeFormat('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit',timeZone:ui.data.settings.timezone}).format(new Date(schedule.publishedAt))}`)));
+  }):empty('No posts in this view','Try another area or turn off My posts only.'),h('section',{class:'night-flow-table'},h('h3',{},'The flow of the night'),h('table',{},h('caption',{class:'sr-only'},'When and where to serve'),h('tbody',{},data.phases.map(phase=>h('tr',{},h('th',{scope:'row'},flowTime(phase,data.settings)),h('td',{},h('strong',{},phase.name),h('span',{},phase.id==='gather'?`${meetingLocation(ui.date)} · ${data.settings.allLeaderFirstTuesday&&+ui.date.slice(-2)<=7?'All-leader meeting':'Team time'}`:phase.cue))))))),h('p',{class:'board-published'},`Published ${new Intl.DateTimeFormat('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit',timeZone:data.settings.timezone}).format(new Date(schedule.publishedAt))}`)));
 }
 function postGroups(assignments,editable){
   let filtered=assignments;
@@ -218,6 +225,7 @@ function authView(){
   }},error,field(setup?'Create a shared admin passphrase':'Admin password','password','','password',setup?'At least 12 characters. Keep this within your leadership team.':'',{required:true,autocomplete:setup?'new-password':'current-password',minlength:setup?12:1}),setup&&ui.auth.setupTokenRequired?field('Deployment setup token','setupToken','','password','Provided by the person connecting your backend.',{required:true,autocomplete:'off'}):null,h('button',{class:'btn',type:'submit'},setup?'Create admin access':'Sign in'));
   return h('div',{class:'auth-wrap'},h('div',{class:'auth-mark'},icon('lock','large')),h('h1',{},setup?'Set up admin access':'Admin sign in'),h('p',{},setup?'One shared password. Everything your team leads and STLs need to keep the night running.':'Sign in with the shared admin password to manage posts, people, and what’s next.'),setup&&!ui.auth.setupAvailable?notice('Admin setup is not enabled on this deployment. Contact the hosting owner for access.','amber'):form,h('p',{class:'auth-footnote'},'The team-facing workspace is open. Only editing and unpublished information require admin access.'),h('a',{class:'text-link',href:'#home'},'Back to team home'));
 }
+const nightPlanner=createNightPlanner({ui,h,icon,btn,badge,field,selectField,check,modal,toast,command,render,dateSelector,longDate,timeFormat,showPublish});
 const adminNav=[['overview','Overview','home'],['schedule','Schedule','calendar'],['roster','Roster','people'],['classes','Disciple','book'],['calendar','Calendar','calendar'],['resources','Resources','file'],['updates','Updates','news'],['settings','Settings','settings']];
 function adminShell(){return h('div',{class:'admin-layout'},h('aside',{class:'admin-sidebar'},h('h2',{},'Admin workspace'),h('p',{},'Shared access · TNS'),h('nav',{class:'admin-nav','aria-label':'Admin navigation'},adminNav.map(([key,label,i])=>h('a',{href:`#admin/${key}`,class:adminPage()===key?'active':''},icon(i),label))),h('div',{class:'logout'},btn('Sign out',logout,'ghost small','logout'))),h('div',{class:'admin-content'},adminContent()));}
 async function logout(){await api('/api/logout','POST',{});ui.auth.authenticated=false;ui.admin=null;location.hash='home';render();}
@@ -230,17 +238,15 @@ function adminOverview(){
 function absenceRow(a){const p=ui.admin.people.find(p=>p.id===a.personId);return h('div',{class:'absence-row'},h('div',{},h('h3',{},p?.name||'Archived leader'),h('p',{},dateFormat(a.date,{weekday:'short',month:'short',day:'numeric'}),a.late?' · Late report':''),h('p',{class:'reason'},a.reason)),btn('Clear',()=>confirmAction('Clear this absence?',`${p?.name||'This leader'} will become available for ${longDate(a.date)}.`,()=>command('cancelAbsence',{id:a.id})),'ghost small'));}
 function showAllAbsences(){modal('Absence reports','Reasons stay in the admin workspace.',ui.admin.absences.length?ui.admin.absences.slice().sort((a,b)=>a.date.localeCompare(b.date)).map(absenceRow):h('p',{class:'muted'},'No absences have been submitted.'));}
 function confirmAction(title,text,onConfirm){modal(title,text,h('p',{},'You can review the updated workspace afterward.'),{saveLabel:'Confirm',onSave:async()=>{await onConfirm();toast('Saved.');}});}
-function adminSchedule(){
-  const schedule=ui.admin.schedules[ui.date],draft=schedule?.draft;
-  return[heading('Schedule','Generate a suggestion, review the people and coverage, then publish.',[btn(draft?'Refresh draft':'Generate draft',async()=>{await command('generate',{date:ui.date});toast('Draft ready for review.');},'secondary','calendar'),draft?btn('Publish posts',showPublish,'','check'):null]),h('div',{class:'toolbar'},h('div',{class:'toolbar-group'},dateSelector()),h('div',{class:'toolbar-group'},draft?badge(draft.stale?'Needs refresh':'Ready for review',draft.stale?'amber':'green'):badge('No draft'),schedule?.published?badge('Published version available','outline'):null)),draft?.stale?notice('Availability or configuration changed. Refresh the suggested draft before publishing.','amber'):null,draft?.issues.length?notice(`${draft.issues.filter(i=>i.severity==='coverage').length} posts need coverage. Review the open positions and make edits before publishing.`,'amber'):null,draft?postGroups(draft.assignments,true):empty('Bring this night together','The suggestion uses current availability, confirmed class pairings, and staffing priorities.',btn('Generate draft',async()=>{await command('generate',{date:ui.date});toast('Draft ready for review.');},'','calendar'))];
-}
+function adminSchedule(){return nightPlanner.view();}
+
 function editPostAssignment(a){
   const choices=ui.admin.people.filter(p=>p.active&&p.assignable&&p.role!=='Team lead'&&(a.group==='any'||p.group===a.group)&&!ui.admin.absences.some(x=>x.personId===p.id&&x.date===ui.date));
   modal(a.label,`${longDate(ui.date)} · ${a.location}`,h('div',{},selectField('Leader','primary',a.people[0]||'',[{id:'',name:'Unassigned'},...choices]),selectField('Second leader, if needed','secondary',a.people[1]||'',[{id:'',name:'None'},...choices]),a.externalName?notice(`External co-lead: ${a.externalName} · ${a.externalTeam}. ${a.externalAvailable?'Available for this session.':'Unavailable or not confirmed.'}`):null,check('Swap with their other post in this phase if needed','swap',true),h('p',{class:'small-muted'},'This edit applies to this night. The class pairing and trimester preferences stay in place.')),{onSave:async fd=>{await command('editAssignment',{date:ui.date,assignmentId:a.id,people:[fd.get('primary'),fd.get('secondary')].filter(Boolean),swap:fd.has('swap')});toast('Post updated in the draft.');}});
 }
 function showPublish(){
   const draft=ui.admin.schedules[ui.date]?.draft;if(!draft)return;
-  modal('Publish these posts?',`${longDate(ui.date)} · Visible to the team after publishing.`,h('div',{},draft.issues.length?h('div',{},notice('Some positions are still uncovered.','amber'),h('ul',{class:'warning-list'},draft.issues.map(i=>h('li',{},`${i.label}: ${i.message}`))),check('Publish with these coverage gaps clearly visible','acknowledge',false)):notice('All required posts are covered.'),h('p',{},'The public team view will show this version. Absence reasons and admin notes remain private.')),{saveLabel:'Publish posts',onSave:async fd=>{await command('publish',{date:ui.date,acknowledgeShortages:fd.has('acknowledge')});toast('Posts published. The team view is up to date.');}});
+  modal('Publish these posts?',`${longDate(ui.date)} · Visible to the team after publishing.`,h('div',{},draft.issues.length?h('div',{},notice('Some positions are still uncovered.','amber'),h('ul',{class:'warning-list'},draft.issues.map(i=>h('li',{},`${i.label}: ${i.message}`))),check('Publish with these coverage gaps clearly visible','acknowledge',false)):notice('All required posts are covered.'),h('p',{},'The public team view will show these room details, instructions, and post notes. Absence reasons stay private.')),{saveLabel:'Publish posts',onSave:async fd=>{await command('publish',{date:ui.date,acknowledgeShortages:fd.has('acknowledge')});toast('Posts published. The team view is up to date.');}});
 }
 function rosterView(){const state=ui.admin,active=state.people.filter(p=>p.active),missingGroup=active.filter(p=>p.role!=='Team lead'&&p.group==='unassigned').length;return[heading('Roster','Keep the roster current and configure preferred partners ahead of each trimester.',[btn('Import roster',importRoster,'secondary','upload'),btn('Add leader',()=>editPerson(),'','plus')]),h('div',{class:'pill-row roster-summary'},badge(`${active.length} people`),badge(`${active.filter(p=>p.role==='Team lead').length} team leads`),badge(`${active.filter(p=>p.role==='Subteam lead').length} STLs`),missingGroup?badge(`${missingGroup} groups needed`,'amber'):null),h('div',{class:'toolbar'},h('div',{class:'toolbar-group'},h('input',{type:'search',placeholder:'Find a leader…','aria-label':'Search roster',onInput:e=>{document.querySelectorAll('[data-person-search]').forEach(row=>row.hidden=!row.dataset.personSearch.includes(e.target.value.toLowerCase()));}})),h('div',{class:'toolbar-group'},h('label',{class:'small-muted'},'Pairings for'),h('select',{'aria-label':'Trimester pairings',value:ui.period,onChange:e=>{ui.period=e.target.value;render();}},state.periods.map(p=>option(p.id,p.name))))),notice('Team leads report absences like everyone else, but stay out of ordinary post allocation. Archive departing leaders to preserve their history.'),h('div',{class:'table-wrap'},h('table',{class:'admin-table'},h('thead',{},h('tr',{},['Leader','Subteam','Staffing','Preferred partner',''].map(t=>h('th',{},t)))),h('tbody',{},state.people.filter(p=>p.active).map(p=>h('tr',{'data-person-search':`${p.name} ${p.team} ${p.role}`.toLowerCase()},h('td',{},h('div',{class:'person-cell'},h('span',{class:'avatar'},initials(p.name)),h('span',{},p.name,h('span',{class:'subline'},p.role)))),h('td',{},p.team),h('td',{},badge(p.role==='Team lead'?'Not allocated':p.group==='unassigned'?'Group needed':p.group==='men'?'Men':'Women',p.role!=='Team lead'&&p.group==='unassigned'?'amber':'')),h('td',{},state.people.find(x=>x.id===p.partners?.[ui.period])?.name||'—'),h('td',{},btn('Edit',()=>editPerson(p),'ghost small','edit')))))))];}
 function editPerson(person){
@@ -292,11 +298,14 @@ function restoreBackup(){modal('Restore a workspace backup','Export your current
 function changePassword(){modal('Change the shared admin password','Other signed-in browsers will need to sign in again.',h('div',{},field('Current password','currentPassword','','password','',{required:true,autocomplete:'current-password'}),field('New shared passphrase','password','','password','Use 12 or more characters.',{required:true,minlength:12,autocomplete:'new-password'})),{saveLabel:'Change password',onSave:async fd=>{await api('/api/admin/password','POST',{currentPassword:fd.get('currentPassword'),password:fd.get('password')});toast('Admin password changed.');}});}
 function render(){
   if(!ui.data)return;
-  const main=h('main',{id:'main',class:'main',tabindex:'-1'});
+  const active=document.activeElement,focusId=active?.closest('#app')?active.id:null;
+  document.body.classList.toggle('planning-night',route()==='admin/schedule');
+  const main=h('main',{id:'main',class:route()==='admin/schedule'?'main planner-main':'main',tabindex:'-1'});
   let content;
   switch(route()){case'home':content=home();break;case'posts':content=postsView();break;case'calendar':content=calendarView();break;case'resources':content=resourcesView();break;case'updates':content=updatesView();break;default:content=route().startsWith('admin')?[ui.auth.authenticated&&ui.admin?adminShell():authView()]:home();}
   main.append(...content.flat(Infinity).filter(node=>node!==null&&node!==undefined&&node!==false));
   $('#app').replaceChildren(...[header(),ui.data.isSample?h('div',{class:'sample-bar'},'Sample workspace · Fictional roster and assignments · Class dates are provisional'):null,main,h('footer',{class:'site-footer'},h('span',{},`${ui.data.settings.shortName} · ${ui.data.settings.ministryName}`),h('span',{},'See Jesus. Take your next step.'),h('a',{href:API&&new URL(API).origin!==location.origin?`${API}/#admin`:'#admin',class:'text-link'},'Admin workspace'))].filter(Boolean));
+  if(focusId)document.getElementById(focusId)?.focus({preventScroll:true});
 }
 $('.skip-link').addEventListener('click',event=>{event.preventDefault();$('#main')?.focus();});
 window.addEventListener('hashchange',()=>{if($('#modal').open)$('#modal').close();render();window.scrollTo({top:0,behavior:'instant'});});
