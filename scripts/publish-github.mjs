@@ -30,13 +30,14 @@ try{head=api(refPath);}catch(error){
  const seed=files.find(f=>f.path==='.gitignore');api(`repos/${repository}/contents/.gitignore`,'PUT',{message:'Initialize the TNS application repository',content:seed.data.toString('base64')});head=api(refPath);
 }
 const parent=head.object.sha,base=api(`repos/${repository}/git/commits/${parent}`);
+if(process.env.GITHUB_EXPECTED_HEAD && parent!==process.env.GITHUB_EXPECTED_HEAD)throw new Error('The source branch changed since this workspace was reviewed. Inspect the newer changes before publishing.');
 const entries=[];
 for(const file of files){
  if(/\.(png|ttf|woff2)$/.test(file.path)){const blob=api(`repos/${repository}/git/blobs`,'POST',{content:file.data.toString('base64'),encoding:'base64'});entries.push({path:file.path,mode:'100644',type:'blob',sha:blob.sha});}
  else entries.push({path:file.path,mode:'100644',type:'blob',content:file.data.toString('utf8')});
 }
 const tree=api(`repos/${repository}/git/trees`,'POST',{base_tree:base.tree.sha,tree:entries});
-const commit=api(`repos/${repository}/git/commits`,'POST',{message:'Build TNS team workspace and prepare production hosting',tree:tree.sha,parents:[parent]});
+const commit=api(`repos/${repository}/git/commits`,'POST',{message:process.env.GITHUB_COMMIT_MESSAGE||'Build TNS team workspace and prepare production hosting',tree:tree.sha,parents:[parent]});
 if(api(refPath).object.sha!==parent)throw new Error('The branch changed during preparation. Inspect the new changes before retrying.');
 api(`repos/${repository}/git/refs/heads/${branch}`,'PATCH',{sha:commit.sha,force:false});
 console.log(JSON.stringify({repository,branch,commit:commit.sha,url:commit.html_url,files:files.length}));

@@ -4,6 +4,8 @@ A working first version for TNS at The Porch. The public team workspace includes
 
 The posts board follows the supplied TNS schedule sheet: navy headings, Barlow Semi Condensed, role columns with names underneath, and a separate flow-of-the-night table. The original TNS logo was extracted unchanged from the spreadsheet. Historical assignments and pairings were not imported into the 2027 season. A fresh checkout starts with a fictional 30-person roster and sample assignments. The current local workspace has the imported roster and leadership roles in its ignored database; those personal records are not in the source repository. Class dates remain provisional.
 
+The shared header displays the TNS logo on its own. Home prioritizes the selected serving date and personal assignments in evening order, with updates, upcoming events, and resources alongside them on larger screens. Phones use persistent navigation for all five team sections. The navy and condensed headings extend the existing posts-sheet identity throughout the app. Interaction references include [Planning Center's personal schedule](https://help.planningcenter.com/en/142874-manage-your-schedule.html) and [RotaCloud's mobile scheduling hierarchy](https://rotacloud.com/features/mobile-app/).
+
 ## Run locally
 
 Requires Node.js 24 or later; no npm packages are needed.
