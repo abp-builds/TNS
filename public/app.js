@@ -104,18 +104,20 @@ function home(){
   const data=ui.data,schedule=data.schedules[ui.date],phaseOrder=new Map(data.phases.map((phase,index)=>[phase.id,index]));
   const my=(schedule?.assignments.filter(a=>a.people.includes(ui.person))||[]).sort((a,b)=>(phaseOrder.get(a.phase)??Infinity)-(phaseOrder.get(b.phase)??Infinity)||Number(data.posts.find(p=>p.id===b.postId)?.kind==='host')-Number(data.posts.find(p=>p.id===a.postId)?.kind==='host'));
   const isOut=data.unavailable.some(a=>a.personId===ui.person&&a.date===ui.date);
+  const selectedPerson=data.people.find(p=>p.id===ui.person);
   const allLeader=data.settings.allLeaderFirstTuesday&&+ui.date.slice(-2)<=7;
   const personalMessage=(title,body,symbol='people')=>h('div',{class:'personal-message'},icon(symbol),h('div',{},h('h3',{},title),h('p',{},body)));
   const personalContent=!ui.person
     ?personalMessage('Find your place for the night','Choose your name above to see your posts, partners, and rooms.')
     :isOut?personalMessage('You’re marked unavailable','Need to change your absence? Contact a team lead.','calendar')
+    :selectedPerson?.role==='Team lead'?personalMessage('You’re serving as a team lead','You’re outside the regular post rotation. Use Posts to review the full plan.','people')
     :!schedule?personalMessage('Your posts will appear here','Leadership will review and publish the plan for this night.','clock')
     :my.length?h('ol',{class:'personal-posts','aria-label':'Your posts in evening order'},my.map(a=>h('li',{class:'personal-post'},
       h('p',{class:'personal-phase'},phaseLabel(a.phase)),
       h('h3',{},a.label),h('p',{class:'personal-room'},icon('pin'),a.location),
       a.externalName?h('p',{class:'personal-partner'},`With ${a.externalName}${a.externalTeam?` (${a.externalTeam})`:''}${a.externalAvailable?'':' — unavailable / unconfirmed'}`):null,
       a.people.length>1?h('p',{class:'personal-partner'},`With ${a.personNames.filter(p=>p.id!==ui.person).map(p=>p.name).join(', ')}`):null)))
-    :personalMessage('You don’t have a published post',data.people.find(p=>p.id===ui.person)?.role==='Team lead'?'You’re serving as a team lead, outside the regular post rotation.':'Check with a team lead if you expected an assignment.','people');
+    :personalMessage('You don’t have a published post','Check with a team lead if you expected an assignment.','people');
   const assignment=h('section',{class:'personal-plan','aria-labelledby':'personal-title'},
     h('div',{class:'personal-heading'},h('h2',{id:'personal-title'},'Where you’re needed'),badge(schedule?(schedule.needsReview?'Coverage being reviewed':'Posts published'):'Posts not published',schedule?(schedule.needsReview?'amber':'green'):'outline')),
     h('div',{class:'personal-controls'},h('label',{class:'field'},h('span',{},'Your name'),personSelector()),h('a',{class:'text-link',href:'#posts'},'View all posts')),
